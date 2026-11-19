@@ -59,6 +59,27 @@ export function collideCircleBoxes(x, z, radius, boxes) {
   return { x, z, hit };
 }
 
+// Separate two cars (circle vs circle) and bleed a little speed on
+// impact. a and b are Car instances. Returns the impact speed.
+export function separateCars(a, b) {
+  const dx = b.pos.x - a.pos.x;
+  const dz = b.pos.z - a.pos.z;
+  const d = Math.hypot(dx, dz);
+  const min = (a.spec.length + b.spec.length) * 0.32;
+  if (d >= min || d < 0.001) return 0;
+  const nx = dx / d;
+  const nz = dz / d;
+  const overlap = min - d;
+  a.pos.x -= nx * overlap * 0.5;
+  a.pos.z -= nz * overlap * 0.5;
+  b.pos.x += nx * overlap * 0.5;
+  b.pos.z += nz * overlap * 0.5;
+  const impact = Math.abs(a.speed - b.speed);
+  a.speed *= 0.85;
+  b.speed *= 0.85;
+  return impact;
+}
+
 // Make a THREE.CanvasTexture from a painter function. `repeat` tiles it.
 export function canvasTexture(THREE, w, h, paint, repeatX = 1, repeatY = 1) {
   const c = document.createElement('canvas');

@@ -24,6 +24,7 @@ export class Hud {
     this.scale = this.mapSize / GROUND_SIZE;
     this.toastTimer = 0;
     this.frame = 0;
+    this.lastWanted = 0;
     this.missionMarker = null; // {x, z} set by missions.js (Day 3)
   }
 
@@ -57,11 +58,16 @@ export class Hud {
   }
 
   update(dt, state) {
-    // state: { health, cash, wanted, speedKmh, driving, player, cars }
+    // state: { health, cash, wanted, speedKmh, driving, player, cars,
+    //          police?, peds? }
     this.frame++;
     if (this.toastTimer > 0) {
       this.toastTimer -= dt;
       if (this.toastTimer <= 0) this.el.toast.style.opacity = '0';
+    }
+    if (state.wanted !== this.lastWanted) {
+      this.lastWanted = state.wanted;
+      this.setWanted(state.wanted);
     }
     this.el.health.style.width = `${state.health}%`;
     this.el.healthText.textContent = `${Math.round(state.health)}`;
@@ -120,6 +126,27 @@ export class Hud {
       g.beginPath();
       g.arc(cx, cy, 2.5, 0, Math.PI * 2);
       g.fill();
+    }
+    // Police cruisers: red dots with a white ring (blink on odd frames).
+    if (state.police) {
+      for (const car of state.police) {
+        const [cx, cy] = this.toMap(car.pos.x, car.pos.z);
+        g.fillStyle = this.frame % 30 < 15 ? '#ff4a3a' : '#3a6ad8';
+        g.beginPath();
+        g.arc(cx, cy, 3, 0, Math.PI * 2);
+        g.fill();
+        g.strokeStyle = '#ffffff';
+        g.lineWidth = 1;
+        g.stroke();
+      }
+    }
+    // Pedestrians: tiny pale dots.
+    if (state.peds) {
+      g.fillStyle = '#c9b896';
+      for (const ped of state.peds) {
+        const [px2, py2] = this.toMap(ped.pos.x, ped.pos.z);
+        g.fillRect(px2 - 1, py2 - 1, 2, 2);
+      }
     }
     // Player arrow (heading: 0 faces +Z, which is down on the map).
     const [px, py] = this.toMap(state.player.pos.x, state.player.pos.z);

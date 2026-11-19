@@ -1,15 +1,20 @@
 // main.js — Teluk Cahaya boot, game loop and state machine.
 // States: menu (start screen, slow orbit over the city), playing,
-// paused (pointer lock lost). Day 1: on foot + one drivable car family,
-// HUD + minimap. Traffic, police, missions and combat arrive Day 2-3.
+// paused (pointer lock lost), busted, wasted. Day 2 adds the living
+// city: traffic, pedestrians, wanted level + police. Missions and
+// combat arrive Day 3-4.
 
 import * as THREE from 'three';
 import { buildCity } from './city.js';
 import { Player } from './player.js';
 import { Car } from './car.js';
+import { TrafficManager } from './traffic.js';
+import { PedestrianManager } from './pedestrians.js';
+import { PoliceManager } from './police.js';
+import { UiScreens } from './ui.js';
 import { Hud } from './hud.js';
 import { AudioEngine } from './audio.js';
-import { clamp, lerp } from './utils.js';
+import { clamp, lerp, separateCars } from './utils.js';
 
 const params = new URLSearchParams(location.search);
 const SHOT = params.get('shot') || ''; // start | play — staging hooks for screenshots
@@ -38,25 +43,80 @@ scene.add(new THREE.HemisphereLight(0xbfd8ff, 0x8a7a5a, 0.85));
 
 // ---- World ---------------------------------------------------------------
 const city = buildCity(scene);
-const cars = city.parkingSpots.map((s) => {
+// Parked cars from the city's parking spots, plus the traffic fleet.
+// Every car is stealable: E near one puts Raka behind the wheel.
+const parkedCars = city.parkingSpots.map((s) => {
   const car = new Car(s.type, s.x, s.z, s.heading);
+  car.owner = 'city';
   scene.add(car.mesh);
   return car;
 });
+const traffic = new TrafficManager(scene, city.roadGraph, city.colliders);
+const cars = [...parkedCars, ...traffic.cars.map((n) => n.car)];
 
 const player = new Player(city.spawn.x, city.spawn.z, city.spawn.heading);
 scene.add(player.mesh);
 
 const hud = new Hud(city.roadGraph);
 const audio = new AudioEngine();
+const peds = new PedestrianManager(scene, city.roadGraph);
 
 const state = {
-  mode: 'menu', // menu | playing | paused
+  mode: 'menu', // menu | playing | paused | busted | wasted
   health: 100,
   cash: 0,
   wanted: 0,
   time: 0,
 };
+
+function doBusted() {
+  if (state.mode !== 'playing') return;
+  state.mode = 'busted';
+  audio.stopSiren();
+  if (document.pointerLockElement) document.exitPointerLock();
+  ui.showBusted(state.wanted);
+}
+
+function doWasted() {
+  if (state.mode !== 'playing') return;
+  state.mode = 'wasted';
+  audio.stopSiren();
+  if (document.pointerLockElement) document.exitPointerLock();
+  ui.showWasted();
+}
+
+// Back on the street after BUSTED or WASTED: on foot, healthy, clean.
+function respawn() {
+  if (player.inCar) {
+    player.inCar.occupied = false;
+    player.inCar = null;
+  }
+  player.pos.set(city.spawn.x, 0, city.spawn.z);
+  player.mesh.position.copy(player.pos);
+  player.mesh.visible = true;
+  player.camYaw = city.spawn.heading;
+  player.heading = city.spawn.heading;
+  state.health = 100;
+  state.wanted = 0;
+  police.reset();
+  hud.setObjective('Jelajahi Teluk Cahaya — tekan E di dekat mobil untuk mengemudi.');
+  hud.showToast('Raka kembali ke jalanan.');
+  setMode('playing');
+}
+
+const policeApi = {
+  damagePlayer(amount) {
+    state.health = Math.max(0, state.health - amount);
+  },
+  busted() {
+    doBusted();
+  },
+  toast(text) {
+    hud.showToast(text);
+  },
+};
+const police = new PoliceManager(scene, city.roadGraph, city.colliders);
+const ui = new UiScreens(respawn);
 
 hud.setCash(0);
 hud.setWanted(0);
@@ -148,6 +208,13 @@ function toggleCar() {
     player.inCar = car;
     player.mesh.visible = false;
     player.camYaw = car.heading;
+    if (car.owner !== 'player') {
+      // First time behind this wheel: it's theft, and the Patroli notice.
+      car.owner = 'player';
+      police.addStars(1);
+      hud.showToast('Mobil dicuri! Patroli mengejarmu');
+      audio.blip(220, 0.25, 'sawtooth', 0.2);
+    }
     hud.showToast(`${car.type === 'kancil' ? 'Kancil' : car.type} — W/S gas & rem, A/D belok, Spasi rem tangan, E keluar`);
     audio.blip(880, 0.1);
   }
@@ -162,7 +229,12 @@ function setMode(mode) {
   document.body.classList.toggle('menu-mode', mode === 'menu');
   overlayMenu.style.display = mode === 'menu' ? 'flex' : 'none';
   overlayPaused.style.display = mode === 'paused' ? 'flex' : 'none';
-  if (mode === 'playing' && SHOT !== 'play') canvas.requestPointerLock();
+  if (mode === 'playing' && SHOT !== 'play') {
+    // A programmatic click (e.g. a test) is not a user gesture; swallow
+    // the rejection instead of logging an unhandled error.
+    const p = canvas.requestPointerLock();
+    if (p && p.catch) p.catch(() => {});
+  }
   if (mode !== 'playing' && document.pointerLockElement) document.exitPointerLock();
 }
 
@@ -197,7 +269,12 @@ function animate() {
   if (state.mode === 'playing') {
     if (player.inCar) {
       const car = player.inCar;
-      car.update(dt, driveInput(), city.colliders);
+      const input = driveInput();
+      if (car.damage >= 100) {
+        // Wrecked: the engine is dead until Raka gets out and finds another.
+        input.throttle = 0;
+      }
+      car.update(dt, input, city.colliders);
       // Camera follows the car's heading, eased so turns do not whip.
       player.camYaw += (car.heading - player.camYaw) * Math.min(1, dt * 3);
       tmpTarget.set(car.pos.x, 1.4, car.pos.z);
@@ -213,6 +290,8 @@ function animate() {
         driving: true,
         player,
         cars,
+        police: police.allCars(),
+        peds: peds.list,
       });
     } else {
       player.updateOnFoot(dt, footInput(), city.colliders);
@@ -229,8 +308,51 @@ function animate() {
         driving: false,
         player,
         cars,
+        police: police.allCars(),
+        peds: peds.list,
       });
     }
+
+    // ---- Day 2: the living city ----------------------------------------
+    traffic.update(dt, player, player.inCar, peds, cars);
+    peds.update(dt, player, player.inCar, cars);
+    const hitPed = peds.checkPlayerCarHit(player.inCar);
+    if (hitPed) {
+      police.addStars(1);
+      hud.showToast('Kamu menabrak pejalan kaki! Patroli mengejarmu');
+      audio.blip(180, 0.3, 'sawtooth', 0.25);
+    }
+    police.update(dt, player, player.inCar, policeApi);
+    // Pedestrians scatter from a chase passing by.
+    for (const pc of police.active) {
+      peds.scare(pc.car.pos.x, pc.car.pos.z, 9);
+    }
+    // Car-vs-car: rams, bumps and roadblocks are solid.
+    const allTraffic = [...cars, ...police.allCars()];
+    for (let i = 0; i < allTraffic.length; i++) {
+      for (let j = i + 1; j < allTraffic.length; j++) {
+        const impact = separateCars(allTraffic[i], allTraffic[j]);
+        if (impact > 4) {
+          allTraffic[i].damage = Math.min(100, allTraffic[i].damage + impact * 0.4);
+          allTraffic[j].damage = Math.min(100, allTraffic[j].damage + impact * 0.4);
+        }
+      }
+    }
+    // Wanted level, siren and objective follow the police state.
+    const prevWanted = state.wanted;
+    state.wanted = police.wanted;
+    if (state.wanted > 0) {
+      audio.startSiren();
+      if (prevWanted === 0) {
+        hud.setObjective('Kabur dari Patroli! Sembunyi sampai bintang hilang.');
+      }
+    } else {
+      audio.stopSiren();
+      if (prevWanted > 0) {
+        hud.setObjective('Jelajahi Teluk Cahaya — tekan E di dekat mobil untuk mengemudi.');
+      }
+    }
+    if (state.health <= 0) doWasted();
     // Cinematic orbit for staged screenshots (no pointer lock headless).
     if (SHOT === 'play') {
       player.camYaw += dt * 0.12;
@@ -261,10 +383,14 @@ window.addEventListener('resize', () => {
 
 // Shot hooks: ?shot=play skips the menu for headless screenshots;
 // ?drive=1 starts the player inside the nearest car.
-if (SHOT === 'play') {
+// ?shot=chase stages a police chase (3 stars, cruisers pulled in close).
+if (SHOT === 'play' || SHOT === 'chase') {
   state.mode = 'playing';
   overlayMenu.style.display = 'none';
-  if (AUTO_DRIVE) {
+  // The boot hook bypasses setMode, so drop the menu-mode class too —
+  // otherwise the HUD panels (stars, minimap, objective) stay hidden.
+  document.body.classList.remove('menu-mode');
+  if (AUTO_DRIVE || SHOT === 'chase') {
     const car = nearestCar(500);
     if (car) {
       car.occupied = true;
@@ -273,9 +399,14 @@ if (SHOT === 'play') {
       player.camYaw = car.heading;
     }
   }
+  if (SHOT === 'chase') {
+    police.addStars(3);
+    police.stageChase(player.inCar);
+    hud.setObjective('Kabur dari Patroli! Sembunyi sampai bintang hilang.');
+  }
 }
 
 animate();
 
 // Debug handle for headless playtests (not part of the game UI).
-window.__game = { scene, player, cars, city, state, THREE };
+window.__game = { scene, player, cars, city, state, THREE, traffic, peds, police };

@@ -47,6 +47,10 @@
   .overlay button:hover { background: #ffe066; }
   #paused { display: none; }
   #paused h1 { font-size: 44px; }
+  #busted { display: none; }
+  #busted h1 { font-size: 56px; color: #7fb4ff; }
+  #wasted { display: none; }
+  #wasted h1 { font-size: 56px; color: #ff5a4a; }
   /* In the menu the HUD stays out of the way of the title screen. */
   body.menu-mode #hud-top-left, body.menu-mode #objective,
   body.menu-mode #minimap-wrap, body.menu-mode #hint { display: none; }
@@ -96,6 +100,18 @@
   <h1>JEDA</h1>
   <h2>Teluk Cahaya menunggumu.</h2>
   <button id="resume-btn">LANJUTKAN</button>
+</div>
+
+<div id="busted" class="overlay">
+  <h1>BUSTED</h1>
+  <h2 id="busted-text">Patroli menangkapmu.</h2>
+  <button id="busted-btn">COBA LAGI</button>
+</div>
+
+<div id="wasted" class="overlay">
+  <h1>WASTED</h1>
+  <h2 id="wasted-text">Raka tumbang di jalanan Teluk Cahaya.</h2>
+  <button id="wasted-btn">COBA LAGI</button>
 </div>
 
 <script type="module" src="./src/main.js"></script>

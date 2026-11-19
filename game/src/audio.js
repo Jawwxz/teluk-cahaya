@@ -68,6 +68,51 @@ export class AudioEngine {
     osc.stop(t + dur + 0.02);
   }
 
+  // Two-tone police siren: one oscillator whose pitch swings on a slow LFO.
+  startSiren() {
+    if (!this.ctx || this.sirenOsc) return;
+    const t = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.value = 800;
+    const lfo = this.ctx.createOscillator();
+    lfo.type = 'sine';
+    lfo.frequency.value = 0.55;
+    const lfoGain = this.ctx.createGain();
+    lfoGain.gain.value = 260;
+    lfo.connect(lfoGain);
+    lfoGain.connect(osc.frequency);
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(0.05, t + 0.4);
+    osc.connect(gain);
+    gain.connect(this.master);
+    osc.start(t);
+    lfo.start(t);
+    this.sirenOsc = osc;
+    this.sirenLfo = lfo;
+    this.sirenGain = gain;
+  }
+
+  stopSiren() {
+    if (!this.sirenOsc) return;
+    const t = this.ctx.currentTime;
+    this.sirenGain.gain.setTargetAtTime(0.0001, t, 0.1);
+    const osc = this.sirenOsc;
+    const lfo = this.sirenLfo;
+    window.setTimeout(() => {
+      try {
+        osc.stop();
+        lfo.stop();
+      } catch (e) {
+        // Already stopped; nothing to do.
+      }
+    }, 400);
+    this.sirenOsc = null;
+    this.sirenLfo = null;
+    this.sirenGain = null;
+  }
+
   toggleMute() {
     this.muted = !this.muted;
     if (this.master) this.master.gain.value = this.muted ? 0 : 0.35;
