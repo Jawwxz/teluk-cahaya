@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Teluk Cahaya — open-world crime game</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #1a2027;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color: #f2ede4; }
+  #game { display: block; width: 100%; height: 100%; }
+  .panel { background: rgba(16, 20, 26, 0.62); border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 8px; padding: 8px 12px; backdrop-filter: blur(2px); }
+  #hud-top-left { position: fixed; top: 14px; left: 14px; z-index: 5; min-width: 210px; }
+  #health-row { display: flex; align-items: center; gap: 8px; }
+  #health-bar { flex: 1; height: 12px; background: rgba(255,255,255,0.18); border-radius: 6px; overflow: hidden; }
+  #health-fill { height: 100%; width: 100%; background: linear-gradient(90deg, #37c978, #7ee2a0); }
+  #health-text { font-weight: 700; font-size: 13px; min-width: 26px; text-align: right; }
+  #cash { font-size: 20px; font-weight: 800; color: #7ee2a0; margin-top: 6px; letter-spacing: 0.5px; }
+  #stars { margin-top: 4px; font-size: 20px; letter-spacing: 2px; }
+  #stars .star { color: rgba(255,255,255,0.25); }
+  #stars .star.on { color: #ffd23a; text-shadow: 0 0 8px rgba(255, 210, 58, 0.7); }
+  #objective { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); z-index: 5;
+    font-size: 15px; font-weight: 600; text-align: center; max-width: 46vw; }
+  #minimap-wrap { position: fixed; top: 14px; right: 14px; z-index: 5; }
+  #minimap { display: block; border-radius: 50%; border: 2px solid rgba(255,255,255,0.35);
+    background: #20262e; }
+  #speed { position: fixed; right: 22px; bottom: 18px; z-index: 5; font-size: 44px; font-weight: 800;
+    text-shadow: 0 2px 8px rgba(0,0,0,0.6); display: none; text-align: right; line-height: 1; }
+  #speed-label { font-size: 14px; font-weight: 600; color: rgba(255,255,255,0.75); }
+  #toast { position: fixed; left: 50%; bottom: 110px; transform: translateX(-50%); z-index: 5;
+    font-size: 16px; font-weight: 600; padding: 8px 16px; opacity: 0; transition: opacity 0.3s;
+    pointer-events: none; }
+  #hint { position: fixed; left: 14px; bottom: 14px; z-index: 5; font-size: 12.5px;
+    color: rgba(255,255,255,0.8); line-height: 1.6; }
+  .overlay { position: fixed; inset: 0; z-index: 10; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 14px; text-align: center;
+    background: linear-gradient(180deg, rgba(10, 14, 20, 0.25) 0%, rgba(10, 14, 20, 0.72) 100%); }
+  .overlay h1 { font-size: 64px; letter-spacing: 6px; font-weight: 900; color: #ffd98a;
+    text-shadow: 0 4px 24px rgba(0,0,0,0.7); }
+  .overlay h2 { font-size: 17px; font-weight: 500; color: rgba(255,255,255,0.9); max-width: 560px; line-height: 1.55; }
+  .overlay .controls { font-size: 14px; color: rgba(255,255,255,0.85); line-height: 1.9;
+    background: rgba(16, 20, 26, 0.6); border: 1px solid rgba(255,255,255,0.14);
+    border-radius: 8px; padding: 12px 22px; }
+  .overlay button { font-size: 19px; font-weight: 800; letter-spacing: 1px; color: #1a2027;
+    background: #ffd23a; border: none; border-radius: 10px; padding: 14px 42px; cursor: pointer; }
+  .overlay button:hover { background: #ffe066; }
+  #paused { display: none; }
+  #paused h1 { font-size: 44px; }
+  /* In the menu the HUD stays out of the way of the title screen. */
+  body.menu-mode #hud-top-left, body.menu-mode #objective,
+  body.menu-mode #minimap-wrap, body.menu-mode #hint { display: none; }
+</style>
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.min.js" } }
+</script>
+</head>
+<body class="menu-mode">
+<canvas id="game"></canvas>
+
+<div id="hud-top-left" class="panel">
+  <div id="health-row">
+    <div id="health-bar"><div id="health-fill"></div></div>
+    <span id="health-text">100</span>
+  </div>
+  <div id="cash">$0</div>
+  <div id="stars"></div>
+</div>
+
+<div id="objective" class="panel">Jelajahi Teluk Cahaya</div>
+
+<div id="minimap-wrap"><canvas id="minimap" width="180" height="180"></canvas></div>
+
+<div id="speed"><span id="speed-num">0</span><span id="speed-label"> km/h</span></div>
+<div id="toast" class="panel"></div>
+
+<div id="hint" class="panel">
+  WASD jalan &nbsp;·&nbsp; Mouse lihat &nbsp;·&nbsp; Shift lari &nbsp;·&nbsp; E naik/turun mobil<br>
+  W/S gas &amp; rem &nbsp;·&nbsp; A/D belok &nbsp;·&nbsp; Spasi rem tangan &nbsp;·&nbsp; M suara
+</div>
+
+<div id="menu" class="overlay">
+  <h1>TELUK CAHAYA</h1>
+  <h2>Raka, seorang kurir, terseret perang wilayah antara Geng Ombak dan Keluarga
+  Merpati di kota pesisir yang tak pernah tidur. Jelajahi kotanya dengan berjalan
+  kaki atau mengemudi — dan jangan sampai Patroli menangkapmu.</h2>
+  <div class="controls">
+    WASD — jalan &nbsp;·&nbsp; Mouse — lihat &nbsp;·&nbsp; Shift — lari<br>
+    E — naik / turun mobil &nbsp;·&nbsp; W/S — gas &amp; rem &nbsp;·&nbsp; A/D — belok<br>
+    Spasi — rem tangan &nbsp;·&nbsp; M — suara &nbsp;·&nbsp; Esc — jeda
+  </div>
+  <button id="start-btn">MULAI</button>
+</div>
+
+<div id="paused" class="overlay">
+  <h1>JEDA</h1>
+  <h2>Teluk Cahaya menunggumu.</h2>
+  <button id="resume-btn">LANJUTKAN</button>
+</div>
+
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
