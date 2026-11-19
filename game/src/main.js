@@ -206,6 +206,10 @@ const missions = new Missions(scene, {
   toast: (text, seconds) => hud.showToast(text, seconds),
 });
 
+// ?fresh=1: staged shots start from a clean profile, ignoring any save
+// left in the browser profile from earlier playtests.
+if (params.get('fresh') === '1') save.clear();
+
 // Restore saved progress, if any.
 if (save.data) {
   state.cash = save.data.cash || 0;
@@ -482,7 +486,16 @@ function animate() {
       // Camera follows the car's heading, eased so turns do not whip.
       player.camYaw += (car.heading - player.camYaw) * Math.min(1, dt * 3);
       tmpTarget.set(car.pos.x, 1.4, car.pos.z);
-      const cam = player.carCameraPosition(car);
+      let cam;
+      if (SHOT === 'chase') {
+        // Cover shot: park the camera ahead of the car and look back at
+        // it, so the Patroli cruisers on its tail are in the frame.
+        const fx = Math.sin(car.heading);
+        const fz = Math.cos(car.heading);
+        cam = new THREE.Vector3(car.pos.x + fx * 11, 4.2, car.pos.z + fz * 11);
+      } else {
+        cam = player.carCameraPosition(car);
+      }
       camPos.lerp(cam, 1 - Math.exp(-6 * dt));
       camTarget.lerp(tmpTarget, 1 - Math.exp(-8 * dt));
       audio.setEngine(Math.abs(car.speed) / car.spec.maxSpeed, true);
@@ -626,6 +639,7 @@ window.addEventListener('resize', () => {
 // ?shot=mission stages a mission in progress (?mission=N picks which).
 // ?shot=street stages Raka on foot on a market street, camera north.
 // ?shot=city stages a wide dusk view over the harbour/downtown (menu).
+// ?fresh=1 wipes the saved profile first, so staged shots start clean.
 if (SHOT === 'play' || SHOT === 'chase' || SHOT === 'mission' || SHOT === 'street') {
   state.mode = 'playing';
   overlayMenu.style.display = 'none';
@@ -644,6 +658,26 @@ if (SHOT === 'play' || SHOT === 'chase' || SHOT === 'mission' || SHOT === 'stree
   if (SHOT === 'chase') {
     police.addStars(3);
     police.stageChase(player.inCar);
+    // Pull the cruisers in tighter for the cover frame: stageChase leaves
+    // them 26+ m back, and the shot reads better at 15–29 m behind.
+    const chased = player.inCar;
+    if (chased) {
+      const fx = Math.sin(chased.heading);
+      const fz = Math.cos(chased.heading);
+      police.active.forEach((entry, i) => {
+        const back = 15 + i * 7;
+        const side = (i % 2 === 0 ? 1 : -1) * 3;
+        entry.car.pos.set(
+          chased.pos.x - fx * back - fz * side,
+          0,
+          chased.pos.z - fz * back + fx * side,
+        );
+        entry.car.heading = chased.heading;
+        entry.car.speed = chased.speed;
+        entry.car.syncMesh();
+      });
+    }
+    missions.holdObjective = true; // the chase objective text stays put
     hud.setObjective('Kabur dari Patroli! Sembunyi sampai bintang hilang.');
   }
   if (SHOT === 'mission') {
@@ -667,9 +701,9 @@ if (SHOT === 'play' || SHOT === 'chase' || SHOT === 'mission' || SHOT === 'stree
     player.heading = stage.yaw;
   }
   if (SHOT === 'street') {
-    // On foot on a market street, camera behind Raka looking north
-    // toward the glass towers, stalls and traffic ahead.
-    player.pos.set(0, 0, 72);
+    // On foot on the market avenue, camera behind Raka looking north
+    // toward the plaza stalls, the glass towers, and traffic ahead.
+    player.pos.set(0, 0, 24);
     player.mesh.position.copy(player.pos);
     player.camYaw = Math.PI;
     player.heading = Math.PI;
