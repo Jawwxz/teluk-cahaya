@@ -1,8 +1,8 @@
 // main.js — Teluk Cahaya boot, game loop and state machine.
 // States: menu (start screen, slow orbit over the city), playing,
-// paused (pointer lock lost), busted, wasted. Day 2 adds the living
-// city: traffic, pedestrians, wanted level + police. Missions and
-// combat arrive Day 3-4.
+// paused (pointer lock lost), busted, wasted. Day 2 added the living
+// city: traffic, pedestrians, wanted level + police. Day 3 adds
+// missions, combat, economy and saving.
 
 import * as THREE from 'three';
 import { buildCity } from './city.js';
@@ -14,10 +14,14 @@ import { PoliceManager } from './police.js';
 import { UiScreens } from './ui.js';
 import { Hud } from './hud.js';
 import { AudioEngine } from './audio.js';
+import { Missions } from './missions.js';
+import { Combat, WEAPONS } from './combat.js';
+import { Economy } from './economy.js';
+import { Save } from './save.js';
 import { clamp, lerp, separateCars } from './utils.js';
 
 const params = new URLSearchParams(location.search);
-const SHOT = params.get('shot') || ''; // start | play — staging hooks for screenshots
+const SHOT = params.get('shot') || ''; // start | play | chase | mission — staging hooks
 const AUTO_DRIVE = params.get('drive') === '1';
 
 const canvas = document.getElementById('game');
@@ -64,6 +68,7 @@ const peds = new PedestrianManager(scene, city.roadGraph);
 const state = {
   mode: 'menu', // menu | playing | paused | busted | wasted
   health: 100,
+  armour: 0,
   cash: 0,
   wanted: 0,
   time: 0,
@@ -99,6 +104,8 @@ function respawn() {
   state.health = 100;
   state.wanted = 0;
   police.reset();
+  combat.clearEnemies();
+  missions.restartActive();
   hud.setObjective('Jelajahi Teluk Cahaya — tekan E di dekat mobil untuk mengemudi.');
   hud.showToast('Raka kembali ke jalanan.');
   setMode('playing');
@@ -106,6 +113,12 @@ function respawn() {
 
 const policeApi = {
   damagePlayer(amount) {
+    // Armour soaks damage first.
+    if (state.armour > 0) {
+      const soaked = Math.min(state.armour, amount);
+      state.armour -= soaked;
+      amount -= soaked;
+    }
     state.health = Math.max(0, state.health - amount);
   },
   busted() {
@@ -118,7 +131,79 @@ const policeApi = {
 const police = new PoliceManager(scene, city.roadGraph, city.colliders);
 const ui = new UiScreens(respawn);
 
-hud.setCash(0);
+// ---- Day 3: combat, economy, saving and the mission chain --------------
+const combat = new Combat(scene, {
+  audio,
+  peds,
+  colliders: city.colliders,
+  damagePlayer: (amount) => policeApi.damagePlayer(amount),
+  addCash: (n) => {
+    state.cash += n;
+    hud.setCash(state.cash);
+  },
+  toast: (text, seconds) => hud.showToast(text, seconds),
+  onWeaponChange: (name) => {
+    hud.setWeapon(name);
+    hud.showToast(`Senjata: ${name}`);
+  },
+});
+const save = new Save();
+const economy = new Economy(scene, {
+  getCash: () => state.cash,
+  addCash: (n) => {
+    state.cash += n;
+    hud.setCash(state.cash);
+  },
+  spend: (n) => {
+    if (state.cash < n) return false;
+    state.cash -= n;
+    hud.setCash(state.cash);
+    return true;
+  },
+  toast: (text, seconds) => hud.showToast(text, seconds),
+  blip: (f, d, t, v) => audio.blip(f, d, t, v),
+  hasWeapon: (w) => combat.weapons.includes(w),
+  unlockWeapon: (w) => combat.unlockWeapon(w),
+  onPickupHealth: () => {
+    state.health = Math.min(100, state.health + 35);
+    hud.showToast('Kesehatan +35');
+  },
+  onPickupArmour: () => {
+    state.armour = Math.min(100, state.armour + 50);
+    hud.showToast('Pelindung +50');
+  },
+  spawnCar: (type, x, z) => {
+    const car = new Car(type, x, z, 0);
+    car.owner = 'player';
+    scene.add(car.mesh);
+    cars.push(car);
+    return car;
+  },
+});
+const missions = new Missions(scene, {
+  hud,
+  audio,
+  police,
+  combat,
+  economy,
+  save,
+  toast: (text, seconds) => hud.showToast(text, seconds),
+});
+
+// Restore saved progress, if any.
+if (save.data) {
+  state.cash = save.data.cash || 0;
+  state.armour = save.data.armour || 0;
+  missions.setUnlocked(save.data.unlocked || 0);
+  if (save.data.weapons && save.data.weapons.length) {
+    combat.weapons = [...save.data.weapons];
+    combat.weapon = combat.weapons[0];
+    hud.setWeapon(WEAPONS[combat.weapon].name);
+  }
+  if (save.data.ownedCars) economy.ownedCars = [...save.data.ownedCars];
+}
+
+hud.setCash(state.cash);
 hud.setWanted(0);
 hud.setObjective('Jelajahi Teluk Cahaya — tekan E di dekat mobil untuk mengemudi.');
 
@@ -134,6 +219,11 @@ window.addEventListener('keydown', (e) => {
   }
   keys[e.code] = true;
   if (e.code === 'KeyE' && state.mode === 'playing') toggleCar();
+  if (e.code === 'Digit1' && state.mode === 'playing') combat.setWeapon('pistol');
+  if (e.code === 'Digit2' && state.mode === 'playing') combat.setWeapon('smg');
+  if (e.code === 'KeyB' && state.mode === 'playing' && !player.inCar) {
+    economy.tryBuyNear(player.pos.x, player.pos.z);
+  }
   if (e.code === 'Space') e.preventDefault();
 });
 
@@ -152,6 +242,18 @@ document.addEventListener('mousemove', (e) => {
   if (!pointerLocked || state.mode !== 'playing') return;
   player.camYaw -= e.movementX * 0.0028;
   player.camPitch = clamp(player.camPitch - e.movementY * 0.0028, -0.9, 0.55);
+});
+
+// Mouse fire: click for the pistol, hold for the SMG. Only on foot.
+let mouseDown = false;
+let mouseHeld = false;
+window.addEventListener('mousedown', (e) => {
+  if (e.button !== 0 || state.mode !== 'playing' || !pointerLocked || player.inCar) return;
+  mouseDown = true;
+  mouseHeld = true;
+});
+window.addEventListener('mouseup', (e) => {
+  if (e.button === 0) mouseHeld = false;
 });
 
 function footInput() {
@@ -260,6 +362,7 @@ const camPos = new THREE.Vector3(0, 90, 220);
 const camTarget = new THREE.Vector3(0, 0, 0);
 const tmpTarget = new THREE.Vector3();
 let menuAngle = 0;
+let saveTimer = 0;
 
 function animate() {
   requestAnimationFrame(animate);
@@ -284,6 +387,7 @@ function animate() {
       audio.setEngine(Math.abs(car.speed) / car.spec.maxSpeed, true);
       hud.update(dt, {
         health: state.health,
+        armour: state.armour,
         cash: state.cash,
         wanted: state.wanted,
         speedKmh: car.speedKmh,
@@ -302,6 +406,7 @@ function animate() {
       audio.setEngine(0, false);
       hud.update(dt, {
         health: state.health,
+        armour: state.armour,
         cash: state.cash,
         wanted: state.wanted,
         speedKmh: 0,
@@ -353,6 +458,22 @@ function animate() {
       }
     }
     if (state.health <= 0) doWasted();
+    // ---- Day 3: combat, missions, economy, autosave ------------------
+    combat.update(dt, { player, camera, mouseDown, mouseHeld });
+    mouseDown = false;
+    missions.update(dt, { player, playerCar: player.inCar });
+    economy.update(dt, player, player.inCar);
+    saveTimer += dt;
+    if (saveTimer > 15) {
+      saveTimer = 0;
+      save.store({
+        cash: state.cash,
+        armour: state.armour,
+        unlocked: missions.unlocked,
+        weapons: combat.weapons,
+        ownedCars: economy.ownedCars,
+      });
+    }
     // Cinematic orbit for staged screenshots (no pointer lock headless).
     if (SHOT === 'play') {
       player.camYaw += dt * 0.12;
@@ -404,9 +525,17 @@ if (SHOT === 'play' || SHOT === 'chase') {
     police.stageChase(player.inCar);
     hud.setObjective('Kabur dari Patroli! Sembunyi sampai bintang hilang.');
   }
+  if (SHOT === 'mission') {
+    // Stage mission 1 in progress, Raka on foot near the pickup beacon.
+    missions.startCurrent();
+    player.pos.set(0, 0, -30);
+    player.mesh.position.copy(player.pos);
+    player.camYaw = Math.PI;
+    player.heading = Math.PI;
+  }
 }
 
 animate();
 
 // Debug handle for headless playtests (not part of the game UI).
-window.__game = { scene, player, cars, city, state, THREE, traffic, peds, police };
+window.__game = { scene, player, cars, city, state, THREE, traffic, peds, police, missions, combat, economy, save };

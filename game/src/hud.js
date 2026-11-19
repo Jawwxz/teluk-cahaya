@@ -11,6 +11,10 @@ export class Hud {
     this.el = {
       health: document.getElementById('health-fill'),
       healthText: document.getElementById('health-text'),
+      armourRow: document.getElementById('armour-row'),
+      armour: document.getElementById('armour-fill'),
+      armourText: document.getElementById('armour-text'),
+      weapon: document.getElementById('weapon'),
       cash: document.getElementById('cash'),
       stars: document.getElementById('stars'),
       speed: document.getElementById('speed'),
@@ -45,6 +49,10 @@ export class Hud {
     this.el.objective.textContent = text;
   }
 
+  setWeapon(name) {
+    this.el.weapon.textContent = name;
+  }
+
   setCash(amount) {
     this.el.cash.textContent = `$${amount.toLocaleString('en-US')}`;
   }
@@ -71,6 +79,13 @@ export class Hud {
     }
     this.el.health.style.width = `${state.health}%`;
     this.el.healthText.textContent = `${Math.round(state.health)}`;
+    if (state.armour > 0) {
+      this.el.armourRow.style.display = 'flex';
+      this.el.armour.style.width = `${state.armour}%`;
+      this.el.armourText.textContent = `${Math.round(state.armour)}`;
+    } else {
+      this.el.armourRow.style.display = 'none';
+    }
     if (state.driving) {
       this.el.speedNum.textContent = `${Math.round(state.speedKmh)}`;
       this.el.speed.style.display = 'block';

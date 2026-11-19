@@ -16,6 +16,11 @@
   #health-bar { flex: 1; height: 12px; background: rgba(255,255,255,0.18); border-radius: 6px; overflow: hidden; }
   #health-fill { height: 100%; width: 100%; background: linear-gradient(90deg, #37c978, #7ee2a0); }
   #health-text { font-weight: 700; font-size: 13px; min-width: 26px; text-align: right; }
+  #armour-row { display: none; align-items: center; gap: 8px; margin-top: 4px; }
+  #armour-bar { flex: 1; height: 8px; background: rgba(255,255,255,0.18); border-radius: 4px; overflow: hidden; }
+  #armour-fill { height: 100%; width: 0; background: linear-gradient(90deg, #3a6ad8, #7fb4ff); }
+  #armour-text { font-weight: 700; font-size: 12px; min-width: 26px; text-align: right; color: #7fb4ff; }
+  #weapon { font-size: 13px; font-weight: 700; color: #ffd23a; margin-top: 4px; letter-spacing: 0.5px; }
   #cash { font-size: 20px; font-weight: 800; color: #7ee2a0; margin-top: 6px; letter-spacing: 0.5px; }
   #stars { margin-top: 4px; font-size: 20px; letter-spacing: 2px; }
   #stars .star { color: rgba(255,255,255,0.25); }
@@ -31,6 +36,8 @@
   #toast { position: fixed; left: 50%; bottom: 110px; transform: translateX(-50%); z-index: 5;
     font-size: 16px; font-weight: 600; padding: 8px 16px; opacity: 0; transition: opacity 0.3s;
     pointer-events: none; }
+  #flash { position: fixed; inset: 0; z-index: 4; pointer-events: none; opacity: 0;
+    background: radial-gradient(circle at 50% 55%, rgba(255, 240, 180, 0.9), rgba(255, 240, 180, 0) 60%); }
   #hint { position: fixed; left: 14px; bottom: 14px; z-index: 5; font-size: 12.5px;
     color: rgba(255,255,255,0.8); line-height: 1.6; }
   .overlay { position: fixed; inset: 0; z-index: 10; display: flex; flex-direction: column;
@@ -67,9 +74,16 @@
     <div id="health-bar"><div id="health-fill"></div></div>
     <span id="health-text">100</span>
   </div>
+  <div id="armour-row">
+    <div id="armour-bar"><div id="armour-fill"></div></div>
+    <span id="armour-text">0</span>
+  </div>
   <div id="cash">$0</div>
+  <div id="weapon">Pistol</div>
   <div id="stars"></div>
 </div>
+
+<div id="flash"></div>
 
 <div id="objective" class="panel">Jelajahi Teluk Cahaya</div>
 
@@ -80,7 +94,7 @@
 
 <div id="hint" class="panel">
   WASD jalan &nbsp;·&nbsp; Mouse lihat &nbsp;·&nbsp; Shift lari &nbsp;·&nbsp; E naik/turun mobil<br>
-  W/S gas &amp; rem &nbsp;·&nbsp; A/D belok &nbsp;·&nbsp; Spasi rem tangan &nbsp;·&nbsp; M suara
+  Klik kiri tembak &nbsp;·&nbsp; 1/2 ganti senjata &nbsp;·&nbsp; B beli di toko &nbsp;·&nbsp; M suara
 </div>
 
 <div id="menu" class="overlay">
