@@ -16,8 +16,9 @@ import { Hud } from './hud.js';
 import { AudioEngine } from './audio.js';
 import { Missions } from './missions.js';
 import { Combat, WEAPONS } from './combat.js';
-import { Economy } from './economy.js';
+import { Economy, SHOP_ITEMS } from './economy.js';
 import { Save } from './save.js';
+import { Particles } from './particles.js';
 import { clamp, lerp, separateCars } from './utils.js';
 
 const params = new URLSearchParams(location.search);
@@ -63,6 +64,7 @@ scene.add(player.mesh);
 
 const hud = new Hud(city.roadGraph);
 const audio = new AudioEngine();
+const particles = new Particles(scene);
 const peds = new PedestrianManager(scene, city.roadGraph);
 
 const state = {
@@ -73,6 +75,11 @@ const state = {
   wanted: 0,
   time: 0,
 };
+
+// Day 4 polish timers: screen shake, exhaust puffs, wreck smoke.
+let shakeMag = 0;
+let exhaustT = 0;
+let smokeT = 0;
 
 function doBusted() {
   if (state.mode !== 'playing') return;
@@ -135,6 +142,10 @@ const ui = new UiScreens(respawn);
 const combat = new Combat(scene, {
   audio,
   peds,
+  particles,
+  shake: (m) => {
+    shakeMag = Math.max(shakeMag, m);
+  },
   colliders: city.colliders,
   damagePlayer: (amount) => policeApi.damagePlayer(amount),
   addCash: (n) => {
@@ -164,6 +175,10 @@ const economy = new Economy(scene, {
   blip: (f, d, t, v) => audio.blip(f, d, t, v),
   hasWeapon: (w) => combat.weapons.includes(w),
   unlockWeapon: (w) => combat.unlockWeapon(w),
+  getArmour: () => state.armour,
+  buyArmour: () => {
+    state.armour = 100;
+  },
   onPickupHealth: () => {
     state.health = Math.min(100, state.health + 35);
     hud.showToast('Kesehatan +35');
@@ -183,6 +198,7 @@ const economy = new Economy(scene, {
 const missions = new Missions(scene, {
   hud,
   audio,
+  ui,
   police,
   combat,
   economy,
@@ -207,6 +223,13 @@ hud.setCash(state.cash);
 hud.setWanted(0);
 hud.setObjective('Jelajahi Teluk Cahaya — tekan E di dekat mobil untuk mengemudi.');
 
+// Saved progress shows on the start screen.
+const menuProgress = document.getElementById('menu-progress');
+if (save.data && save.data.unlocked > 0) {
+  menuProgress.textContent =
+    `Kemajuan tersimpan: ${save.data.unlocked}/6 misi · $${state.cash.toLocaleString('en-US')}`;
+}
+
 // ---- Input ----------------------------------------------------------------
 const keys = {};
 let pointerLocked = false;
@@ -218,11 +241,24 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   keys[e.code] = true;
+  // The shop panel eats its own keys (1–4 buy, B/Esc close).
+  if (shopOpen) {
+    const buyIdx = ['Digit1', 'Digit2', 'Digit3', 'Digit4'].indexOf(e.code);
+    if (buyIdx >= 0 && SHOP_ITEMS[buyIdx]) {
+      if (economy.buyItem(SHOP_ITEMS[buyIdx].id)) renderShop();
+      return;
+    }
+    if (e.code === 'KeyB' || e.code === 'Escape') {
+      closeShop();
+      return;
+    }
+  }
   if (e.code === 'KeyE' && state.mode === 'playing') toggleCar();
   if (e.code === 'Digit1' && state.mode === 'playing') combat.setWeapon('pistol');
   if (e.code === 'Digit2' && state.mode === 'playing') combat.setWeapon('smg');
   if (e.code === 'KeyB' && state.mode === 'playing' && !player.inCar) {
-    economy.tryBuyNear(player.pos.x, player.pos.z);
+    if (economy.nearestShop(player.pos.x, player.pos.z)) openShop();
+    else hud.showToast('Tidak ada toko di dekatmu — cari kios beratap kuning/biru.');
   }
   if (e.code === 'Space') e.preventDefault();
 });
@@ -322,6 +358,42 @@ function toggleCar() {
   }
 }
 
+// ---- Shop panel (Day 4) -------------------------------------------------
+// B near a kiosk opens the panel; 1–4 buy, B/Esc closes. Keyboard only,
+// so the pointer lock never has to break.
+let shopOpen = false;
+const shopEl = document.getElementById('shop');
+const shopRowsEl = document.getElementById('shop-rows');
+const shopCashEl = document.getElementById('shop-cash');
+
+function renderShop() {
+  shopCashEl.textContent = `$${state.cash.toLocaleString('en-US')}`;
+  let html = '';
+  SHOP_ITEMS.forEach((item, i) => {
+    const owned = economy.itemState(item.id) === 'owned';
+    const afford = state.cash >= item.price;
+    const status = owned
+      ? '<span class="owned">Dimiliki</span>'
+      : afford
+        ? `<span class="price">$${item.price}</span>`
+        : `<span class="poor">$${item.price} — uang kurang</span>`;
+    html += `<div class="shop-row"><span class="key">${i + 1}</span><span class="name">${item.name}<span class="desc">${item.desc}</span></span>${status}</div>`;
+  });
+  shopRowsEl.innerHTML = html;
+}
+
+function openShop() {
+  shopOpen = true;
+  renderShop();
+  shopEl.style.display = 'block';
+  audio.blip(660, 0.08);
+}
+
+function closeShop() {
+  shopOpen = false;
+  shopEl.style.display = 'none';
+}
+
 // ---- Menus -----------------------------------------------------------------
 const overlayMenu = document.getElementById('menu');
 const overlayPaused = document.getElementById('paused');
@@ -378,6 +450,35 @@ function animate() {
         input.throttle = 0;
       }
       car.update(dt, input, city.colliders);
+      // Exhaust puffs while the throttle is down; a wreck blows up once.
+      if (input.throttle > 0 && Math.abs(car.speed) > 3) {
+        exhaustT += dt;
+        if (exhaustT > 0.09) {
+          exhaustT = 0;
+          const bx = -Math.sin(car.heading);
+          const bz = -Math.cos(car.heading);
+          particles.exhaust(
+            car.pos.x + bx * car.spec.length * 0.5,
+            0.45,
+            car.pos.z + bz * car.spec.length * 0.5,
+            bx,
+            bz,
+          );
+        }
+      }
+      if (car.damage >= 100 && !car.wrecked) {
+        car.wrecked = true;
+        particles.explosion(car.pos.x, 1, car.pos.z);
+        audio.explosion();
+        shakeMag = Math.max(shakeMag, 0.8);
+      }
+      if (car.damage >= 100) {
+        smokeT += dt;
+        if (smokeT > 0.25) {
+          smokeT = 0;
+          particles.smoke(car.pos.x, 1.2, car.pos.z);
+        }
+      }
       // Camera follows the car's heading, eased so turns do not whip.
       player.camYaw += (car.heading - player.camYaw) * Math.min(1, dt * 3);
       tmpTarget.set(car.pos.x, 1.4, car.pos.z);
@@ -463,6 +564,8 @@ function animate() {
     mouseDown = false;
     missions.update(dt, { player, playerCar: player.inCar });
     economy.update(dt, player, player.inCar);
+    // Walking away from a kiosk closes the shop panel.
+    if (shopOpen && !economy.nearestShop(player.pos.x, player.pos.z)) closeShop();
     saveTimer += dt;
     if (saveTimer > 15) {
       saveTimer = 0;
@@ -480,11 +583,19 @@ function animate() {
     }
   } else {
     // Menu: slow orbit above the city so the start screen has a backdrop.
-    menuAngle += dt * 0.03;
-    tmpTarget.set(0, 10, 0);
-    camPos.lerp(new THREE.Vector3(Math.sin(menuAngle) * 210, 95, Math.cos(menuAngle) * 210), 1 - Math.exp(-2 * dt));
-    camTarget.lerp(tmpTarget, 1 - Math.exp(-2 * dt));
+    if (SHOT === 'city') {
+      // Wide dusk frame: harbour cranes west, glass towers north.
+      camPos.lerp(new THREE.Vector3(150, 135, 215), 1 - Math.exp(-2 * dt));
+      camTarget.lerp(new THREE.Vector3(-50, 8, -70), 1 - Math.exp(-2 * dt));
+    } else {
+      menuAngle += dt * 0.03;
+      tmpTarget.set(0, 10, 0);
+      camPos.lerp(new THREE.Vector3(Math.sin(menuAngle) * 210, 95, Math.cos(menuAngle) * 210), 1 - Math.exp(-2 * dt));
+      camTarget.lerp(tmpTarget, 1 - Math.exp(-2 * dt));
+    }
   }
+
+  particles.update(dt);
 
   // Gentle water shimmer.
   for (const w of city.water) {
@@ -492,6 +603,13 @@ function animate() {
   }
 
   camera.position.copy(camPos);
+  // Screen shake from explosions decays fast.
+  if (shakeMag > 0.002) {
+    camera.position.x += (Math.random() - 0.5) * shakeMag;
+    camera.position.y += (Math.random() - 0.5) * shakeMag * 0.6;
+    camera.position.z += (Math.random() - 0.5) * shakeMag;
+    shakeMag *= Math.exp(-5 * dt);
+  }
   camera.lookAt(camTarget);
   renderer.render(scene, camera);
 }
@@ -505,8 +623,10 @@ window.addEventListener('resize', () => {
 // Shot hooks: ?shot=play skips the menu for headless screenshots;
 // ?drive=1 starts the player inside the nearest car.
 // ?shot=chase stages a police chase (3 stars, cruisers pulled in close).
-// ?shot=mission stages mission 1 in progress, Raka on foot by the beacon.
-if (SHOT === 'play' || SHOT === 'chase' || SHOT === 'mission') {
+// ?shot=mission stages a mission in progress (?mission=N picks which).
+// ?shot=street stages Raka on foot on a market street, camera north.
+// ?shot=city stages a wide dusk view over the harbour/downtown (menu).
+if (SHOT === 'play' || SHOT === 'chase' || SHOT === 'mission' || SHOT === 'street') {
   state.mode = 'playing';
   overlayMenu.style.display = 'none';
   // The boot hook bypasses setMode, so drop the menu-mode class too —
@@ -527,21 +647,41 @@ if (SHOT === 'play' || SHOT === 'chase' || SHOT === 'mission') {
     hud.setObjective('Kabur dari Patroli! Sembunyi sampai bintang hilang.');
   }
   if (SHOT === 'mission') {
-    // Stage mission 1 in progress, Raka on foot near the pickup beacon.
+    // Stage a mission in progress (?mission=N picks which one).
     // A clean slate first: the browser profile may hold a finished save.
     save.clear();
-    missions.setUnlocked(0);
+    const mNum = Math.max(1, Math.min(6, parseInt(params.get('mission') || '1', 10)));
+    missions.setUnlocked(mNum - 1);
     state.cash = 0;
     hud.setCash(0);
     missions.startCurrent();
-    player.pos.set(0, 0, -30);
+    const stage =
+      mNum === 3
+        ? { x: 48, z: 44, yaw: 0 }
+        : mNum === 6
+          ? { x: -192, z: -44, yaw: Math.PI }
+          : { x: 0, z: -30, yaw: Math.PI };
+    player.pos.set(stage.x, 0, stage.z);
+    player.mesh.position.copy(player.pos);
+    player.camYaw = stage.yaw;
+    player.heading = stage.yaw;
+  }
+  if (SHOT === 'street') {
+    // On foot on a market street, camera behind Raka looking north
+    // toward the glass towers, stalls and traffic ahead.
+    player.pos.set(0, 0, 72);
     player.mesh.position.copy(player.pos);
     player.camYaw = Math.PI;
     player.heading = Math.PI;
   }
 }
+if (SHOT === 'city') {
+  // A still frame, not play: the menu state keeps the HUD hidden and
+  // the menu branch holds a fixed camera; hide the title overlay.
+  overlayMenu.style.display = 'none';
+}
 
 animate();
 
 // Debug handle for headless playtests (not part of the game UI).
-window.__game = { scene, player, cars, city, state, THREE, traffic, peds, police, missions, combat, economy, save };
+window.__game = { scene, player, cars, city, state, THREE, traffic, peds, police, missions, combat, economy, save, particles };

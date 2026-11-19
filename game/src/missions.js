@@ -65,6 +65,90 @@ const DEFS = [
     ],
     done: 'Pasar Lama kembali! Para pedagang bisa bernapas lagi.',
   },
+  {
+    id: 4,
+    title: 'Selamatkan Dara',
+    reward: 1000,
+    briefing: [
+      "Dara diculik! Geng Ombak menahannya di gudang Pelabuhan.",
+      "Dara: 'Raka! Aku di sini — hati-hati, mereka bersenjata!'",
+      "Dara: 'Ayo, bawa aku ke rumah aman di Bukit Perumahan.'",
+    ],
+    steps: [
+      { type: 'goto', x: -144, z: 48, r: 8, text: 'Temukan gudang tempat Dara ditahan' },
+      {
+        type: 'eliminate',
+        count: 3,
+        spots: [
+          [-152, 40],
+          [-136, 56],
+          [-144, 64],
+        ],
+        text: 'Habisi 3 penjaga Geng Ombak',
+      },
+      { type: 'goto', x: -96, z: 96, r: 6, text: 'Bawa Dara ke rumah aman' },
+    ],
+    done: "Dara selamat! Keluarga Merpati: 'Kami berutang nyawa padamu.'",
+  },
+  {
+    id: 5,
+    title: 'Rencana Perampokan',
+    reward: 1200,
+    briefing: [
+      "Merpati: 'Curi cetak biru brankas Ombak di Menara Kaca.'",
+      'Patroli mengejarmu! Kabur ke Bukit Perumahan.',
+      "Merpati: 'Serahkan cetak birunya — perampokan besar dimulai.'",
+    ],
+    steps: [
+      { type: 'goto', x: 144, z: -48, r: 6, text: 'Ambil cetak biru di Menara Kaca' },
+      {
+        type: 'chase',
+        x: 96,
+        z: -144,
+        r: 8,
+        time: 75,
+        stars: 2,
+        text: 'Kabur dari Patroli ke Bukit Perumahan!',
+      },
+      { type: 'goto', x: 144, z: 96, r: 6, text: 'Serahkan cetak biru ke Merpati' },
+    ],
+    done: 'Cetak biru di tangan! Perampokan dermaga bisa dimulai.',
+  },
+  {
+    id: 6,
+    title: 'Perang di Dermaga',
+    reward: 2000,
+    briefing: [
+      'Malam penentuan: rebut dermaga Pelabuhan dari Geng Ombak.',
+      'Lima penjaga terakhir. Habisi mereka semua!',
+      'Patroli datang! Kabur ke Pasar Lama — ini akhir perang.',
+    ],
+    steps: [
+      { type: 'goto', x: -192, z: -48, r: 8, text: 'Ke dermaga Pelabuhan' },
+      {
+        type: 'eliminate',
+        count: 5,
+        spots: [
+          [-200, -56],
+          [-184, -40],
+          [-192, -32],
+          [-176, -56],
+          [-200, -32],
+        ],
+        text: 'Habisi 5 anggota Geng Ombak',
+      },
+      {
+        type: 'chase',
+        x: 0,
+        z: 0,
+        r: 8,
+        time: 90,
+        stars: 3,
+        text: 'Kabur dari Patroli ke Pasar Lama!',
+      },
+    ],
+    done: 'Dermaga direbut! Teluk Cahaya akhirnya tenang — untuk sekarang.',
+  },
 ];
 
 function beaconMesh() {
@@ -106,6 +190,7 @@ export class Missions {
     this.unlocked = 0; // missions completed
     this.active = null; // { def, step, timer, lineIdx }
     this.idle = 0; // seconds with no mission running
+    this.celebrate = 0; // mission-complete screen still showing
     this.beacon = beaconMesh();
     this.beacon.visible = false;
     scene.add(this.beacon);
@@ -181,9 +266,9 @@ export class Missions {
     });
     this.beacon.visible = false;
     this.hooks.hud.missionMarker = null;
-    this.hooks.audio.blip(660, 0.12);
-    this.hooks.audio.blip(880, 0.12);
-    this.hooks.audio.blip(990, 0.2);
+    this.hooks.audio.jingle();
+    this.hooks.ui.showMissionComplete(def.title, def.reward);
+    this.celebrate = 4; // the next mission waits for the screen
     this.hooks.toast(`${def.done} +$${def.reward}`);
     this.active = null;
     this.idle = 0;
@@ -204,6 +289,12 @@ export class Missions {
     if (!this.active) {
       if (!this.current) {
         this.hooks.hud.setObjective('Semua misi selesai — Teluk Cahaya milikmu.');
+        return;
+      }
+      // The mission-complete screen holds the next start for a beat.
+      if (this.celebrate > 0) {
+        this.celebrate -= dt;
+        if (this.celebrate <= 0) this.hooks.ui.hideMissionComplete();
         return;
       }
       // Next mission starts on its own a few seconds after the last one.

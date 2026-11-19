@@ -1,9 +1,18 @@
-// economy.js — cash, world pickups and the two shops.
+// economy.js — cash, world pickups, the shops and the shop panel.
 // Pickups: health (+35), armour (+50) and cash packets ($25–$50) lying
-// around the city; they bob, respawn after 25 s. Shops: Toko Senjata
-// (SMG $600) and Dealer Mobil (Banteng $900, Elang $1.200) — walk up to
-// the kiosk and press B. The full shop panel arrives Day 4.
+// around the city; they bob, respawn after 25 s. Shops (Day 4): Toko
+// Senjata (SMG $600), Toko Pelindung (rompi $400), Dealer Mobil
+// (Banteng $900, Elang $1.200) — walk up to a kiosk and press B for
+// the panel, then 1–4 to buy, B to close.
 import * as THREE from 'three';
+
+// The full catalogue the shop panel shows (same ids as the kiosks).
+export const SHOP_ITEMS = [
+  { id: 'smg', name: 'SMG', price: 600, desc: 'Senjata otomatis — tekan 2 untuk memakai' },
+  { id: 'armour', name: 'Rompi Pelindung', price: 400, desc: 'Pelindung penuh (100)' },
+  { id: 'banteng', name: 'Banteng (SUV)', price: 900, desc: 'Mobilmu sendiri, terparkir di dealer' },
+  { id: 'elang', name: 'Elang (Sport)', price: 1200, desc: 'Mobil tercepat di Teluk Cahaya' },
+];
 
 const RESPAWN_S = 25;
 const PICKUPS = [
@@ -47,6 +56,16 @@ const SHOPS = [
     item: 'banteng',
     label: 'Banteng',
     price: 900,
+  },
+  {
+    kind: 'armour',
+    name: 'Toko Pelindung',
+    x: -96,
+    z: 0,
+    color: 0x9a7bd8,
+    item: 'armour',
+    label: 'Rompi Pelindung',
+    price: 400,
   },
 ];
 
@@ -135,39 +154,63 @@ export class Economy {
     return best;
   }
 
-  // Press B near a kiosk: buy its item, or hear why not.
-  tryBuyNear(px, pz) {
-    const shop = this.nearestShop(px, pz);
-    if (!shop) return false;
+  // Buy one catalogue item (the shop panel calls this with 1–4).
+  // Returns true when the panel should refresh its rows.
+  buyItem(id) {
+    const item = SHOP_ITEMS.find((x) => x.id === id);
+    if (!item) return false;
     const h = this.hooks;
-    if (shop.kind === 'weapon') {
-      if (h.hasWeapon(shop.item)) {
+    if (id === 'smg') {
+      if (h.hasWeapon('smg')) {
         h.toast('Kamu sudah punya SMG.');
         return true;
       }
-      if (!h.spend(shop.price)) {
-        h.toast(`Uang kurang — SMG harganya $${shop.price}.`);
+      if (!h.spend(item.price)) {
+        h.toast(`Uang kurang — SMG harganya $${item.price}.`);
         return true;
       }
-      h.unlockWeapon(shop.item);
+      h.unlockWeapon('smg');
       h.blip(880, 0.12);
-      h.toast(`SMG dibeli! Tekan 2 untuk memakainya.`);
+      h.toast('SMG dibeli! Tekan 2 untuk memakainya.');
       return true;
     }
-    // Dealer: one car per kiosk, owned once bought.
-    if (this.ownedCars.includes(shop.item)) {
-      h.toast(`Kamu sudah punya ${shop.label}.`);
+    if (id === 'armour') {
+      if (h.getArmour() >= 100) {
+        h.toast('Rompi pelindungmu sudah penuh.');
+        return true;
+      }
+      if (!h.spend(item.price)) {
+        h.toast(`Uang kurang — rompi harganya $${item.price}.`);
+        return true;
+      }
+      h.buyArmour();
+      h.blip(880, 0.12);
+      h.toast('Rompi Pelindung dibeli! Pelindung penuh.');
       return true;
     }
-    if (!h.spend(shop.price)) {
-      h.toast(`Uang kurang — ${shop.label} harganya $${shop.price}.`);
+    // Dealer cars: one of each, owned once bought.
+    if (this.ownedCars.includes(id)) {
+      h.toast(`Kamu sudah punya ${item.name}.`);
       return true;
     }
-    this.ownedCars.push(shop.item);
-    h.spawnCar(shop.item, shop.x + 6, shop.z + 6);
+    if (!h.spend(item.price)) {
+      h.toast(`Uang kurang — ${item.name} harganya $${item.price}.`);
+      return true;
+    }
+    this.ownedCars.push(id);
+    const shop = this.shops.find((s) => s.item === id);
+    h.spawnCar(id, (shop ? shop.x : 0) + 6, (shop ? shop.z : 0) + 6);
     h.blip(880, 0.12);
-    h.toast(`${shop.label} dibeli! Mobilmu terparkir di samping dealer.`);
+    h.toast(`${item.name} dibeli! Mobilmu terparkir di samping dealer.`);
     return true;
+  }
+
+  // Owned / affordable state for one catalogue row.
+  itemState(id) {
+    const h = this.hooks;
+    if (id === 'smg') return h.hasWeapon('smg') ? 'owned' : 'buy';
+    if (id === 'armour') return h.getArmour() >= 100 ? 'owned' : 'buy';
+    return this.ownedCars.includes(id) ? 'owned' : 'buy';
   }
 
   update(dt, player, playerCar) {

@@ -118,4 +118,53 @@ export class AudioEngine {
     if (this.master) this.master.gain.value = this.muted ? 0 : 0.35;
     return this.muted;
   }
+
+  // Short rising arpeggio for mission-complete.
+  jingle() {
+    if (!this.ctx || this.muted) return;
+    [660, 830, 990, 1320].forEach((f, i) => {
+      window.setTimeout(() => this.blip(f, 0.16, 'sine', 0.28), i * 95);
+    });
+  }
+
+  noiseBuffer() {
+    if (this._noise) return this._noise;
+    const len = this.ctx.sampleRate;
+    const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+    this._noise = buf;
+    return buf;
+  }
+
+  // Explosion: a noise burst through a falling lowpass + a low sine drop.
+  explosion() {
+    if (!this.ctx || this.muted) return;
+    const t = this.ctx.currentTime;
+    const src = this.ctx.createBufferSource();
+    src.buffer = this.noiseBuffer();
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(900, t);
+    filter.frequency.exponentialRampToValueAtTime(90, t + 0.5);
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.5, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.55);
+    src.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.master);
+    src.start(t);
+    src.stop(t + 0.6);
+    const drop = this.ctx.createOscillator();
+    drop.type = 'sine';
+    drop.frequency.setValueAtTime(130, t);
+    drop.frequency.exponentialRampToValueAtTime(32, t + 0.45);
+    const dg = this.ctx.createGain();
+    dg.gain.setValueAtTime(0.4, t);
+    dg.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
+    drop.connect(dg);
+    dg.connect(this.master);
+    drop.start(t);
+    drop.stop(t + 0.55);
+  }
 }

@@ -6,7 +6,7 @@
 // scares nearby pedestrians away.
 import * as THREE from 'three';
 import { buildPedMesh } from './pedestrians.js';
-import { clamp } from './utils.js';
+import { clamp, collideCircleBoxes } from './utils.js';
 
 export const WEAPONS = {
   pistol: { name: 'Pistol', damage: 34, rate: 0.32, spread: 0.015, range: 70, auto: false },
@@ -152,6 +152,12 @@ export class Combat {
     // Nearest enemy along the ray.
     this.raycaster.set(origin, dir);
     this.raycaster.far = w.range;
+    // Muzzle spark at the gun, streaking along the shot.
+    if (this.hooks.particles) {
+      const m = origin.clone().addScaledVector(dir, 1.1);
+      m.y -= 0.25;
+      this.hooks.particles.muzzle(m.x, m.y, m.z, dir.x, dir.y, dir.z);
+    }
     let hitEnemy = null;
     let hitDist = Infinity;
     for (const hit of this.raycaster.intersectObjects(this.enemyGroup.children, true)) {
@@ -182,6 +188,11 @@ export class Combat {
         hitEnemy.deadT = 3;
         hitEnemy.mesh.rotation.z = Math.PI / 2;
         hitEnemy.mesh.position.y = 0.3;
+        if (this.hooks.particles) {
+          this.hooks.particles.explosion(hitEnemy.pos.x, 1, hitEnemy.pos.z);
+        }
+        if (this.hooks.audio.explosion) this.hooks.audio.explosion();
+        if (this.hooks.shake) this.hooks.shake(0.5);
         this.hooks.addCash(BOUNTY);
         this.hooks.toast(`Anggota Geng Ombak tumbang! +$${BOUNTY}`);
       }
@@ -230,8 +241,12 @@ export class Combat {
       e.mesh.rotation.y = e.heading;
       if (d > 11 && d < ENEMY_RANGE) {
         const step = Math.min(d - 10, ENEMY_SPEED * dt);
-        e.pos.x += (dx / d) * step;
-        e.pos.z += (dz / d) * step;
+        // Axis-separated, building-aware: enemies no longer clip corners.
+        const nx = e.pos.x + (dx / d) * step;
+        const nz = e.pos.z + (dz / d) * step;
+        const res = collideCircleBoxes(nx, nz, 0.5, this.hooks.colliders);
+        e.pos.x = res.x;
+        e.pos.z = res.z;
         e.mesh.position.copy(e.pos);
         e.mesh.position.y = Math.abs(Math.sin(performance.now() * 0.012)) * 0.04;
       }
