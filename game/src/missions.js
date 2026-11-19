@@ -191,7 +191,6 @@ export class Missions {
     this.active = null; // { def, step, timer, lineIdx }
     this.idle = 0; // seconds with no mission running
     this.celebrate = 0; // mission-complete screen still showing
-    this.suppressAutoStart = false; // staged ?shot=chase keeps its own objective
     this.beacon = beaconMesh();
     this.beacon.visible = false;
     scene.add(this.beacon);
@@ -288,8 +287,6 @@ export class Missions {
       1 + Math.sin(performance.now() * 0.004) * 0.12,
     );
     if (!this.active) {
-      // Staged chase shots hold their own objective text.
-      if (this.suppressAutoStart) return;
       if (!this.current) {
         this.hooks.hud.setObjective('Semua misi selesai — Teluk Cahaya milikmu.');
         return;
