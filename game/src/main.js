@@ -505,7 +505,8 @@ window.addEventListener('resize', () => {
 // Shot hooks: ?shot=play skips the menu for headless screenshots;
 // ?drive=1 starts the player inside the nearest car.
 // ?shot=chase stages a police chase (3 stars, cruisers pulled in close).
-if (SHOT === 'play' || SHOT === 'chase') {
+// ?shot=mission stages mission 1 in progress, Raka on foot by the beacon.
+if (SHOT === 'play' || SHOT === 'chase' || SHOT === 'mission') {
   state.mode = 'playing';
   overlayMenu.style.display = 'none';
   // The boot hook bypasses setMode, so drop the menu-mode class too —
@@ -527,6 +528,11 @@ if (SHOT === 'play' || SHOT === 'chase') {
   }
   if (SHOT === 'mission') {
     // Stage mission 1 in progress, Raka on foot near the pickup beacon.
+    // A clean slate first: the browser profile may hold a finished save.
+    save.clear();
+    missions.setUnlocked(0);
+    state.cash = 0;
+    hud.setCash(0);
     missions.startCurrent();
     player.pos.set(0, 0, -30);
     player.mesh.position.copy(player.pos);
